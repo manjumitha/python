@@ -1,1 +1,55 @@
+def ways_naive(n, counter):
+    counter[0] += 1
+    if n <= 1:
+        return 1
+    return ways_naive(n - 1, counter) + ways_naive(n - 2, counter)
 
+
+def ways_memo(n, memo, counter):
+    counter[0] += 1
+    if n <= 1:
+        return 1
+    if n in memo:
+        return memo[n]
+    memo[n] = ways_memo(n - 1, memo, counter) + ways_memo(n - 2, memo, counter)
+    return memo[n]
+
+
+def ways_iterative_o1_space(n):
+    if n < 0:
+        raise ValueError("n must be a non-negative integer.")
+    if n <= 1:
+        return 1, 0
+
+    prev2, prev1 = 1, 1
+    steps = 0
+    for _ in range(2, n + 1):
+        steps += 1
+        current = prev1 + prev2
+        prev2, prev1 = prev1, current
+    return prev1, steps
+
+
+def compare_original_vs_redesigned(n, run_naive=True, run_memo=True):
+    print("\n--- Benchmark for n =", n, "---")
+
+    if run_naive:
+        naive_calls = [0]
+        naive_val = ways_naive(n, naive_calls)
+        print("[Original - Naive]       value =", naive_val, "calls =", naive_calls[0])
+
+    if run_memo:
+        memo = {}
+        memo_calls = [0]
+        memo_val = ways_memo(n, memo, memo_calls)
+        print("[Original - Memoized]    value =", memo_val, "calls =", memo_calls[0])
+    else:
+        print("[Original - Memoized]    skipped for n =", n, "(avoids RecursionError near default depth limit of ~1000)")
+
+    iter_val, iter_steps = ways_iterative_o1_space(n)
+    print("[Redesigned - Iterative] value =", iter_val, "steps =", iter_steps)
+
+
+compare_original_vs_redesigned(25, run_naive=True, run_memo=True)
+compare_original_vs_redesigned(500, run_naive=False, run_memo=True)
+compare_original_vs_redesigned(1000, run_naive=False, run_memo=False)
