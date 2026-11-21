@@ -1,1 +1,121 @@
+ from decimal import Decimal, ROUND_HALF_UP
 
+# Rate Cards Configuration (Base rate, Fat step rate, SNF step rate)
+RATE_CARDS = {
+    "regular": {
+        "base_rate": Decimal("30.00"),
+        "fat_step_rate": Decimal("0.40"),
+        "snf_step_rate": Decimal("0.20")
+    },
+    "summer": {  # April to June seasonal rate
+        "base_rate": Decimal("32.00"),
+        "fat_step_rate": Decimal("0.45"),
+        "snf_step_rate": Decimal("0.20")
+    }
+}
+
+# Standard thresholds and bonus parameters
+STD_FAT = Decimal("3.50")
+STD_SNF = Decimal("8.50")
+STEP_UNIT = Decimal("0.10")
+BONUS_THRESHOLD_LITRES = Decimal("500.00")
+BONUS_RATE_PER_LITRE = Decimal("0.50")
+
+
+def get_rate_card(season: str) -> dict:
+    """Selects the appropriate rate card based on the season."""
+    season_key = season.strip().lower()
+    if season_key in ["april", "may", "june", "apr-jun", "summer"]:
+        return RATE_CARDS["summer"]
+    return RATE_CARDS["regular"]
+
+
+def calculate_steps(actual_value: Decimal, standard_value: Decimal) -> Decimal:
+    """Calculates step difference for two-decimal precision readings."""
+    diff = actual_value - standard_value
+    # Preserves fractional steps from two-decimal readings (e.g., 3.75 - 3.50 = 2.5 steps)
+    return diff / STEP_UNIT
+
+
+def calculate_unit_rate(fat: Decimal, snf: Decimal, season: str = "regular") -> Decimal:
+    """Calculates the milk rate per litre using exact Decimal arithmetic."""
+    rates = get_rate_card(season)
+    
+    fat_steps = calculate_steps(fat, STD_FAT)
+    snf_steps = calculate_steps(snf, STD_SNF)
+    
+    unit_rate = (
+        rates["base_rate"]
+        + (fat_steps * rates["fat_step_rate"])
+        + (snf_steps * rates["snf_step_rate"])
+    )
+    
+    # Ensure rate does not fall below zero and round to 2 decimal places
+    unit_rate = max(Decimal("0.00"), unit_rate)
+    return unit_rate.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def calculate_volume_bonus(total_litres_10_days: Decimal) -> Decimal:
+    """Calculates the Rs 0.50/litre bonus if 10-day supply exceeds 500 litres."""
+    if total_litres_10_days > BONUS_THRESHOLD_LITRES:
+        bonus = total_litres_10_days * BONUS_RATE_PER_LITRE
+        return bonus.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return Decimal("0.00")
+
+
+def calculate_farmer_payout(
+    fat_reading: str,
+    snf_reading: str,
+    total_litres_10_days: str,
+    season: str = "regular"
+) -> dict:
+    """Computes complete payout breakdown for a farmer over a 10-day cycle."""
+    fat = Decimal(str(fat_reading))
+    snf = Decimal(str(snf_reading))
+    litres = Decimal(str(total_litres_10_days))
+    
+    rate_per_litre = calculate_unit_rate(fat, snf, season)
+    base_amount = (rate_per_litre * litres).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    bonus_amount = calculate_volume_bonus(litres)
+    total_payout = base_amount + bonus_amount
+    
+    return {
+        "season": season,
+        "fat": fat,
+        "snf": snf,
+        "litres": litres,
+        "rate_per_litre": rate_per_litre,
+        "base_amount": base_amount,
+        "bonus_amount": bonus_amount,
+        "total_payout": total_payout
+    }
+
+
+# --- Test Cases for Verification (Task 12 Evidence) ---
+if __name__ == "__main__":
+    test_cases = [
+        # Test 1: Regular season, > 500L (Bonus applies), two-decimal fat/snf
+        {"fat": "3.85", "snf": "8.65", "litres": "550.00", "season": "regular"},
+        # Test 2: Apr-Jun season, <= 500L (No bonus), two-decimal fat/snf
+        {"fat": "3.85", "snf": "8.65", "litres": "450.00", "season": "Apr-Jun"},
+        # Test 3: Apr-Jun season, > 500L (Both seasonal rate & bonus apply)
+        {"fat": "4.12", "snf": "8.75", "litres": "620.50", "season": "Apr-Jun"},
+        # Test 4: Boundary check - Exactly 500.00 litres (No bonus, requires > 500)
+        {"fat": "3.50", "snf": "8.50", "litres": "500.00", "season": "Apr-Jun"},
+    ]
+
+    print(f"{'Season':<10} | {'Fat':<5} | {'SNF':<5} | {'Litres':<7} | {'Rate/L':<7} | {'Base (Rs)':<10} | {'Bonus (Rs)':<10} | {'Total (Rs)':<10}")
+    print("-" * 82)
+    
+    for tc in test_cases:
+        res = calculate_farmer_payout(tc["fat"], tc["snf"], tc["litres"], tc["season"])
+        print(
+            f"{res['season']:<10} | "
+            f"{res['fat']:<5} | "
+            f"{res['snf']:<5} | "
+            f"{res['litres']:<7} | "
+            f"{res['rate_per_litre']:<7} | "
+            f"{res['base_amount']:<10} | "
+            f"{res['bonus_amount']:<10} | "
+            f"{res['total_payout']:<10}"
+        )
