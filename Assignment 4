@@ -1,1 +1,179 @@
+# --- Module 1: Reader (handles missing files and line parsing) ---
+def read_department_lines(dept_name, lines_or_none):
+    error_logs = []
+    if lines_or_none is None:
+        error_logs.append("MISSING_FILE: Department '" + dept_name + "' file is missing.")
+        return [], error_logs
 
+    records = []
+    for line_no, raw_line in enumerate(lines_or_none, start=1):
+        text = str(raw_line).strip()
+        if not text:
+            error_logs.append("DAMAGED_LINE [" + dept_name + ":" + str(line_no) + "]: Empty line.")
+            continue
+        parts = [p.strip() for p in text.split(";")]
+        if len(parts) < 5:
+            error_logs.append(
+                "DAMAGED_LINE [" + dept_name + ":" + str(line_no) + "]: Expected 5 fields, got "
+                + str(len(parts)) + " -> " + text
+            )
+            continue
+        reg_no, name, dept, email, events_raw = parts[0], parts[1], parts[2], parts[3], parts[4]
+        events = [ev.strip() for ev in events_raw.split(",") if ev.strip()]
+        records.append({
+            "source_dept": dept_name,
+            "line_no": line_no,
+            "reg_no": reg_no,
+            "name": name,
+            "dept": dept if dept else dept_name,
+            "email": email,
+            "events": events
+        })
+    return records, error_logs
+
+
+# --- Module 2: Validator & Deduplicator (string email check + set for O(1) duplicate check) ---
+def is_valid_email_string(email):
+    if not email or " " in email:
+        return False
+    if email.count("@") != 1:
+        return False
+    local, domain = email.split("@")
+    if not local or not domain or "." not in domain:
+        return False
+    if domain.startswith(".") or domain.endswith("."):
+        return False
+    return True
+
+
+def validate_and_deduplicate(raw_records):
+    seen_reg_nos = set()
+    clean_registrations = []
+    logs = []
+    duplicate_count = 0
+    invalid_email_count = 0
+
+    for rec in raw_records:
+        reg_no = rec["reg_no"]
+        name = rec["name"]
+        email = rec["email"]
+        events = rec["events"]
+        loc = rec["source_dept"] + ":" + str(rec["line_no"])
+
+        if not reg_no or not name or not events:
+            logs.append("DAMAGED_RECORD [" + loc + "]: Missing reg_no, name, or events.")
+            continue
+
+        if reg_no in seen_reg_nos:
+            duplicate_count += 1
+            logs.append("DUPLICATE_REG [" + loc + "]: Register number '" + reg_no + "' already registered.")
+            continue
+
+        if not is_valid_email_string(email):
+            invalid_email_count += 1
+            logs.append("INVALID_EMAIL [" + loc + "]: Invalid email '" + email + "' for reg_no '" + reg_no + "'.")
+            continue
+
+        seen_reg_nos.add(reg_no)
+        clean_registrations.append({
+            "reg_no": reg_no,
+            "name": name,
+            "dept": rec["dept"],
+            "email": email.lower(),
+            "events": events
+        })
+
+    stats = {
+        "total_raw": len(raw_records),
+        "clean_count": len(clean_registrations),
+        "duplicate_count": duplicate_count,
+        "invalid_email_count": invalid_email_count
+    }
+    return clean_registrations, logs, stats
+
+
+# --- Module 3: Organizer & Reporter (master list, event-wise lists, summary report) ---
+def build_outputs(clean_registrations, reader_logs, validator_logs, stats):
+    master_list = []
+    event_wise = {}
+
+    for student in clean_registrations:
+        summary_line = (
+            student["reg_no"] + " | " + student["name"] + " | "
+            + student["dept"] + " | " + student["email"] + " | "
+            + ", ".join(student["events"])
+        )
+        master_list.append(summary_line)
+
+        for ev in student["events"]:
+            if ev not in event_wise:
+                event_wise[ev] = []
+            event_wise[ev].append(student["reg_no"] + " - " + student["name"] + " (" + student["dept"] + ")")
+
+    all_errors = reader_logs + validator_logs
+    summary_report = [
+        "=== COLLEGE FEST REGISTRATION SUMMARY ===",
+        "Total Raw Records Processed : " + str(stats["total_raw"]),
+        "Valid Unique Registrations  : " + str(stats["clean_count"]),
+        "Duplicate Registrations     : " + str(stats["duplicate_count"]),
+        "Invalid Emails Rejected     : " + str(stats["invalid_email_count"]),
+        "Total Logged Issues         : " + str(len(all_errors)),
+        "Total Events Found          : " + str(len(event_wise))
+    ]
+
+    return {
+        "master_list": master_list,
+        "event_wise": event_wise,
+        "summary_report": summary_report,
+        "error_log": all_errors
+    }
+
+
+# --- Demonstration Test Cases (Clean, Duplicate, Invalid Email, Damaged Line, Missing File) ---
+dept_inputs = {
+    "CSE": [
+        "REG101; Aarav Menon; CSE; aarav.menon@college.edu; Coding, Quiz",
+        "REG102; Diya Nair; CSE; diya.nair@college.edu; Debate",
+        "REG101; Aarav Menon; CSE; aarav.menon@college.edu; Coding",  # Duplicate registration
+        "REG103; Karthik R; CSE; karthik_at_college.edu; Music",       # Invalid email
+        "REG104; Damaged Line Without Enough Fields"                     # Damaged line
+    ],
+    "ECE": [
+        "REG201; Meera Krishnan; ECE; meera.k@college.edu; Quiz, Robotics",
+        "REG202; Rohan Das; ECE; rohan@@college..edu; Dance"             # Invalid email
+    ],
+    "MECH": None,  # Missing department file
+    "CIVIL": [
+        "REG401; Sneha Iyer; CIVIL; sneha.iyer@college.edu; Debate, Quiz"
+    ],
+    "IT": [
+        "REG501; Vikram Rao; IT; vikram.rao@college.edu; Coding"
+    ]
+}
+
+all_raw = []
+all_reader_errors = []
+
+for dept_name, sample_lines in dept_inputs.items():
+    dept_recs, r_errs = read_department_lines(dept_name, sample_lines)
+    all_raw.extend(dept_recs)
+    all_reader_errors.extend(r_errs)
+
+clean_regs, val_errors, summary_stats = validate_and_deduplicate(all_raw)
+outputs = build_outputs(clean_regs, all_reader_errors, val_errors, summary_stats)
+
+print("\n--- CLEAN MASTER LIST ---")
+for item in outputs["master_list"]:
+    print(item)
+
+print("\n--- EVENT-WISE PARTICIPANT LISTS ---")
+for event_name, participants in outputs["event_wise"].items():
+    print("Event [" + event_name + "]:", participants)
+
+print("\n--- SUMMARY REPORT ---")
+for line in outputs["summary_report"]:
+    print(line)
+
+print("\n--- ERROR LOG ---")
+for err in outputs["error_log"]:
+    print(err)
