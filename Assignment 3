@@ -1,1 +1,174 @@
+def normalize_phone(phone):
+    """Extracts digits and returns the last 10 digits (e.g., '+91 98400 12345' -> '9840012345')."""
+    if not phone:
+        return ""
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits
 
+
+def normalize_name(name):
+    """Cleans titles, extra spaces, and converts name to Title Case."""
+    if not name:
+        return "Unknown"
+    cleaned = str(name).strip()
+    lower_cleaned = cleaned.lower()
+    for prefix in ("dr.", "dr ", "mr.", "mr ", "mrs.", "mrs ", "ms.", "ms "):
+        if lower_cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    parts = cleaned.split()
+    if not parts:
+        return "Unknown"
+    return " ".join(p.capitalize() for p in parts)
+
+
+def choose_better_name(existing_name, new_name):
+    """Keeps the most complete/informative name (e.g., 'Ravi Kumar' over 'Ravi')."""
+    if existing_name == "Unknown":
+        return new_name
+    if new_name == "Unknown":
+        return existing_name
+    if len(new_name) > len(existing_name):
+        return new_name
+    return existing_name
+
+
+def merge_contacts(contact_sources):
+    """
+    Merges contacts from multiple sources (Phone 1, Phone 2, SIM)
+    using a dictionary keyed by normalized phone numbers, with sets for numbers and emails.
+    """
+    phone_index = {}   # normalized_phone -> contact_record
+    merged_records = []
+    operations = 0
+
+    for source in contact_sources:
+        for raw_contact in source:
+            operations += 1
+            raw_name = raw_contact.get("name", "")
+            raw_phones = raw_contact.get("phones", [])
+            raw_emails = raw_contact.get("emails", [])
+
+            norm_name = normalize_name(raw_name)
+            norm_phones = []
+            for p in raw_phones:
+                np = normalize_phone(p)
+                if np:
+                    norm_phones.append(np)
+
+            norm_emails = []
+            for e in raw_emails:
+                if e and str(e).strip():
+                    norm_emails.append(str(e).strip().lower())
+
+            # Find if any normalized phone already belongs to an existing contact
+            matched_record = None
+            for np in norm_phones:
+                if np in phone_index:
+                    matched_record = phone_index[np]
+                    break
+
+            if matched_record is None:
+                matched_record = {
+                    "name": norm_name,
+                    "phones": set(),
+                    "emails": set()
+                }
+                merged_records.append(matched_record)
+            else:
+                matched_record["name"] = choose_better_name(matched_record["name"], norm_name)
+
+            # Update sets and link all numbers of this person to the same record
+            for np in norm_phones:
+                matched_record["phones"].add(np)
+                phone_index[np] = matched_record
+
+            for ne in norm_emails:
+                matched_record["emails"].add(ne)
+
+    return merged_records, operations
+
+
+def pairwise_duplicate_count(all_contacts):
+    """
+    Alternative O(n^2) pairwise comparison (for Complexity Analysis comparison).
+    Counts comparisons without using a dictionary index.
+    """
+    comparisons = 0
+    n = len(all_contacts)
+    for i in range(n):
+        p1 = {normalize_phone(p) for p in all_contacts[i].get("phones", []) if normalize_phone(p)}
+        for j in range(i + 1, n):
+            comparisons += 1
+            p2 = {normalize_phone(p) for p in all_contacts[j].get("phones", []) if normalize_phone(p)}
+            _ = bool(p1 & p2)
+    return comparisons
+
+
+def generate_synthetic_contacts(count):
+    """Generates synthetic contact lists with duplicates and varied formatting."""
+    contacts = []
+    unique_people = max(1, count // 2)
+    for i in range(count):
+        person_id = i % unique_people
+        base_num = 9000000000 + person_id
+        if i % 3 == 0:
+            phone_str = "+91 " + str(base_num)[:5] + " " + str(base_num)[5:]
+            name_str = "Dr. person_" + str(person_id)
+        elif i % 3 == 1:
+            phone_str = str(base_num)
+            name_str = "person_" + str(person_id) + " kumar"
+        else:
+            phone_str = "0" + str(base_num)
+            name_str = ""  # missing name test
+        contacts.append({
+            "name": name_str,
+            "phones": [phone_str],
+            "emails": ["user" + str(person_id) + "@mail.com"] if i % 2 == 0 else []
+        })
+    return contacts
+
+
+# --- 1. Small List Verification (Duplicates, Missing Fields, Different Formats, Same Name) ---
+phone1 = [
+    {"name": "Dr. Ravi", "phones": ["+91 98400 12345"], "emails": ["ravi@work.com"]},
+    {"name": "Anita Sharma", "phones": ["9123456780"], "emails": []}
+]
+phone2 = [
+    {"name": "ravi kumar", "phones": ["9840012345", "9840099999"], "emails": ["RAVI@work.com", "ravi.k@gmail.com"]},
+    {"name": "Ravi Kumar", "phones": ["9000011111"], "emails": ["other.ravi@gmail.com"]}  # Different person, same name
+]
+sim_card = [
+    {"name": "", "phones": ["09840099999"], "emails": []},  # Missing name, secondary number of first Ravi
+    {"name": "Anita Sharma", "phones": [], "emails": ["anita@mail.com"]}  # Missing phone
+]
+
+merged, ops = merge_contacts([phone1, phone2, sim_card])
+
+print("=== Merged Contacts Verification ===")
+for idx, c in enumerate(merged, 1):
+    print(
+        idx,
+        "| Name:", c["name"],
+        "| Phones:", sorted(list(c["phones"])),
+        "| Emails:", sorted(list(c["emails"]))
+    )
+
+# --- 2. Scalability & Complexity Comparison (1,000 vs 100,000 contacts) ---
+print("\n=== Complexity & Operations Comparison (O(n) Dict vs O(n^2) Pairwise) ===")
+for size in (1000, 100000):
+    dataset = generate_synthetic_contacts(size)
+    merged_big, dict_ops = merge_contacts([dataset])
+    if size <= 1000:
+        pair_ops = pairwise_duplicate_count(dataset)
+    else:
+        # Formula n*(n-1)//2 avoids waiting on 5 billion loop iterations in browser sandbox
+        pair_ops = (size * (size - 1)) // 2
+    print(
+        "n =", size,
+        "| Unique Merged =", len(merged_big),
+        "| Dict O(n) Ops =", dict_ops,
+        "| Pairwise O(n^2) Comparisons =", pair_ops
+    )
